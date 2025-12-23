@@ -10,6 +10,7 @@ from datetime import date
 def black_scholes_price(S, K, T, r, sigma, q, opt_type="Call"):
     T_val = max(T, 1e-10)
     sigma_val = max(sigma, 1e-4)
+    # The math expects decimals (e.g., 0.043), not percentages (4.3)
     d1 = (np.log(S / K) + (r - q + 0.5 * sigma_val**2) * T_val) / (sigma_val * np.sqrt(T_val))
     d2 = d1 - sigma_val * np.sqrt(T_val)
     if opt_type == "Call":
@@ -41,7 +42,7 @@ def get_greeks(S, K, T, r, sigma, q, opt_type="Call"):
 
 # --- 2. INITIALIZE SESSION STATE ---
 if 'ticker_price' not in st.session_state: st.session_state['ticker_price'] = 150.0
-if 'div_yield' not in st.session_state: st.session_state['div_yield'] = 0.00
+if 'div_yield_pct' not in st.session_state: st.session_state['div_yield_pct'] = 0.00
 if 'last_ticker' not in st.session_state: st.session_state['last_ticker'] = ""
 if 'solved_iv' not in st.session_state: st.session_state['solved_iv'] = 0.40
 
@@ -51,7 +52,7 @@ st.title("🛡️ Professional IV Solver & Greeks")
 
 with st.sidebar:
     st.header("1. Live Data Feed")
-    ticker_sym = st.text_input("Ticker Symbol", value="AAPL").upper()
+    ticker_sym = st.text_input("Ticker Symbol", value="NVDA").upper()
     ticker_obj = yf.Ticker(ticker_sym)
 
     # --- AUTO-LOAD ON TICKER CHANGE ---
@@ -59,7 +60,9 @@ with st.sidebar:
         try:
             info = ticker_obj.info
             st.session_state['ticker_price'] = info.get('regularMarketPrice', info.get('currentPrice', 150.0))
-            st.session_state['div_yield'] = info.get('dividendYield', 0.0) if info.get('dividendYield') else 0.0
+            # Convert decimal yield to percentage (0.0002 -> 0.02)
+            raw_div = info.get('dividendYield', 0.0) if info.get('dividendYield') else 0.0
+            st.session_state['div_yield_pct'] = raw_div * 100
             st.session_state['last_ticker'] = ticker_sym
         except:
             st.error("Could not fetch ticker info.")
@@ -75,7 +78,7 @@ with st.sidebar:
 
     st.header("2. Option Setup")
     opt_type = st.radio("Option Type", ["Call", "Put"])
-    target_k = st.number_input("Strike Price", value=float(np.round(st.session_state['ticker_price'], 0)))
+    target_k = st.number_input("Strike Price ($)", value=float(np.round(st.session_state['ticker_price'], 0)))
     
     try:
         all_exps = ticker_obj.options
@@ -87,10 +90,16 @@ with st.sidebar:
         T = 30/365.0
 
     st.header("3. Parameters")
-    r_rate = st.number_input("Risk-Free Rate", value=0.0430, format="%.4f")
-    # This input is initialized with auto-data but doesn't overwrite on 🔄 click
-    div_yield = st.number_input("Dividend Yield", value=float(st.session_state['div_yield']), format="%.4f")
-    strike_step = st.number_input("Strike Interval", value=5.0)
+    # User enters 4.3 for 4.3%
+    r_input = st.number_input("Risk-Free Rate (%)", value=4.300, format="%.3f")
+    # User enters 0.02 for 0.02%
+    q_input = st.number_input("Dividend Yield (%)", value=float(st.session_state['div_yield_pct']), format="%.4f")
+    
+    # Internal Conversion for Math: Percent to Decimal
+    r_decimal = r_input / 100.0
+    q_decimal = q_input / 100.0
+    
+    strike_step = st.number_input("Strike Interval ($)", value=5.0)
 
     st.header("4. IV Solver")
     if st.button("⚡ Solve IV from Market"):
@@ -99,25 +108,30 @@ with st.sidebar:
             df = chain.calls if opt_type == "Call" else chain.puts
             row = df.iloc[(df['strike'] - target_k).abs().idxmin()]
             mid = (row['bid'] + row['ask']) / 2
-            solved = find_implied_vol(mid, st.session_state['ticker_price'], target_k, T, r_rate, div_yield, opt_type)
+            solved = find_implied_vol(mid, st.session_state['ticker_price'], target_k, T, r_decimal, q_decimal, opt_type)
             if solved:
                 st.session_state['solved_iv'] = solved
                 st.success(f"IV: {solved*100:.2f}%")
         except:
             st.error("Option fetch failed.")
 
-    final_iv = st.number_input("Final IV", value=float(st.session_state['solved_iv']), format="%.4f")
+    final_iv = st.number_input("Final IV (e.g. 0.45 for 45%)", value=float(st.session_state['solved_iv']), format="%.4f")
 
 # --- 4. RESULTS DISPLAY ---
-# Pricing and Greeks calculations remain the same using 'div_yield' and 'st.session_state['ticker_price']'
 strikes_to_show = [target_k + (i * strike_step) for i in range(-5, 6)]
 pricing_data, greeks_data = [], []
 
 for k in strikes_to_show:
-    p_main = black_scholes_price(st.session_state['ticker_price'], k, T, r_rate, final_iv, div_yield, opt_type)
+    p_main = black_scholes_price(st.session_state['ticker_price'], k, T, r_decimal, final_iv, q_decimal, opt_type)
     pricing_data.append({"Strike": f"${k:,.2f}", f"Price at {final_iv*100:.2f}% IV": f"${p_main:.2f}"})
-    d, g, th = get_greeks(st.session_state['ticker_price'], k, T, r_rate, final_iv, div_yield, opt_type)
-    greeks_data.append({"Strike": f"${k:,.2f}", "Delta": f"{d:.4f}", "Gamma": f"{g:.4f}", "Theta (Daily)": f"${th:.4f}"})
+    
+    d, g, th = get_greeks(st.session_state['ticker_price'], k, T, r_decimal, final_iv, q_decimal, opt_type)
+    greeks_data.append({
+        "Strike": f"${k:,.2f}", 
+        "Delta": f"{d:.4f}", 
+        "Gamma": f"{g:.4f}", 
+        "Theta (Daily)": f"${th:.4f}"
+    })
 
 t1, t2 = st.tabs(["💰 Pricing Matrix", "📈 Greeks Matrix"])
 with t1: st.table(pd.DataFrame(pricing_data))
