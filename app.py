@@ -56,7 +56,7 @@ with st.sidebar:
             # CONSISTENT interpretation of decimal yield
             raw_yield = info.get('dividendYield', 0.0)
             if raw_yield is None: raw_yield = 0.0
-            st.session_state['manual_div_pct'] = float(raw_yield * 100)
+            st.session_state['manual_div_pct'] = float(raw_yield )
             
             st.session_state['last_ticker'] = ticker_sym
         except:
