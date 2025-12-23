@@ -72,7 +72,7 @@ if c2.button("🔄"):
 
 st.sidebar.markdown("---")
 st.sidebar.header("2. Parameters (%)")
-r_pct = st.sidebar.number_input("Risk-Free Rate (%)", value=4.30, format="%.2f")
+r_pct = st.sidebar.number_input("Risk-Free Rate (%)", value=3.50, format="%.2f")
 q_pct = st.sidebar.number_input("Dividend Yield (%)", value=float(st.session_state['manual_div_pct']), format="%.2f")
 r, q = r_pct/100, q_pct/100
 
